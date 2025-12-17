@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="enerkii Netzbetreiber-Ermittlung - Erhalten Sie Informationen zu Ihrem Netzbetreiber und den Netzentgelten">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' https://cdn.tailwindcss.com 'unsafe-inline'; connect-src 'self' https://enerkii.app.n8n.cloud;">
+  <title>enerkii Netzbetreiber ermitteln</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'enerkii-green': '#1C754F',
+            'enerkii-green-mid': '#55977B',
+            'enerkii-green-light': '#8FBAA8',
+            'enerkii-grey': '#A4A4A4',
+            'enerkii-grey-dark': '#4E4E4E',
+            'enerkii-grey-light': '#FAFAFA',
+            'enerkii-black': '#222222',
+            'enerkii-yellow': '#FEC240',
+            'enerkii-yellow-light': '#FFE09F',
+            'enerkii-blue': '#4E71EE',
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .loader {
+      border: 3px solid #8FBAA8;
+      border-top: 3px solid #1C754F;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body class="bg-enerkii-grey-light m-0 p-0">
+  <div id="app"></div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // ============================================
+      // MODULE 1: CONSTANTS & CONFIGURATION
+      // ============================================
+
+      const API_ENDPOINTS = {
+        GRID_OPERATOR_LOOKUP: 'https://enerkii.app.n8n.cloud/webhook/grid_operator_lookup'
+      };
+
+      const VALIDATION_RULES = {
+        vorname: {
+          required: true,
+          minLength: 2,
+          message: 'Bitte geben Sie einen gültigen Vornamen ein (mind. 2 Zeichen)'
+        },
+        name: {
+          required: true,
+          minLength: 2,
+          message: 'Bitte geben Sie einen gültigen Nachnamen ein (mind. 2 Zeichen)'
+        },
+        email: {
+          required: true,
+          pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+          message: 'Bitte geben Sie eine gültige E-Mail-Adresse ein'
+        },
+        telefon: {
+          required: false,
+          pattern: /^[\d\s+\-()]+$/,
+          message: 'Bitte geben Sie eine gültige Telefonnummer ein'
+        },
+        spannungsebene: {
+          required: true,
+          message: 'Bitte wählen Sie eine Spannungsebene aus'
+        },
+        strasse: {
+          required: true,
+          minLength: 3,
+          message: 'Bitte geben Sie eine gültige Straße und Hausnummer ein (mind. 3 Zeichen)'
+        },
+        plz: {
+          required: true,
+          pattern: /^\d{5}$/,
+          message: 'Bitte geben Sie eine gültige 5-stellige PLZ ein'
+        },
+        stadt: {
+          required: true,
+          minLength: 2,
+          message: 'Bitte geben Sie einen gültigen Stadtnamen ein (mind. 2 Zeichen)'
+        }
+      };
+
+      // ============================================
+      // MODULE 2: STATE MANAGEMENT
+      // ============================================
+
+      const AppState = {
+        formData: {
+          vorname: '',
+          name: '',
+          geschlecht: '',
+          unternehmen: '',
+          email: '',
+          telefon: '',
+          spannungsebene: '',
+          strasse: '',
+          plz: '',
+          stadt: ''
+        },
+        submitting: false,
+        submitted: false
+      };
+
+      const StateManager = {
+        listeners: [],
+
+        updateState(updates) {
+          Object.assign(AppState, updates);
+          this.notify();
+        },
+
+        updateFormField(field, value) {
+          AppState.formData[field] = value;
+          this.notify();
+        },
+
+        subscribe(callback) {
+          this.listeners.push(callback);
+        },
+
+        notify() {
+          this.listeners.forEach(callback => callback(AppState));
+        }
+      };
+
+      // ============================================
+      // MODULE 3: DATA SERVICE
+      // ============================================
+
+      const DataService = {
+        async submitGridOperatorLookup(formData) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+
+            const response = await fetch(API_ENDPOINTS.GRID_OPERATOR_LOOKUP, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                vorname: formData.vorname,
+                name: formData.name,
+                geschlecht: formData.geschlecht,
+                unternehmen: formData.unternehmen,
+                email: formData.email,
+                telefon: formData.telefon,
+                spannungsebene: formData.spannungsebene,
+                strasse: formData.strasse,
+                plz: formData.plz,
+                stadt: formData.stadt
+              }),
+              signal: controller.signal
+            });
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            return true;
+
+          } catch (error) {
+            console.error('Grid operator lookup failed:', error);
+            throw error;
+          }
+        }
+      };
+
+      // ============================================
+      // MODULE 4: FORM VALIDATION
+      // ============================================
+
+      const FormValidator = {
+        validate(formData) {
+          const errors = {};
+
+          Object.keys(VALIDATION_RULES).forEach(field => {
+            const rule = VALIDATION_RULES[field];
+            const value = formData[field];
+
+            // Skip validation if field is not required and empty
+            if (!rule.required && (!value || value.trim() === '')) {
+              return;
+            }
+
+            if (rule.required && (!value || value.trim() === '')) {
+              errors[field] = rule.message;
+              return;
+            }
+
+            if (value && rule.pattern && !rule.pattern.test(value)) {
+              errors[field] = rule.message;
+              return;
+            }
+
+            if (value && rule.minLength && value.length < rule.minLength) {
+              errors[field] = rule.message;
+            }
+          });
+
+          return errors;
+        },
+
+        showFieldError(fieldName, message) {
+          const input = document.querySelector(`[name="${fieldName}"]`);
+          if (!input) return;
+
+          input.classList.add('border-red-500');
+
+          let errorElement = input.nextElementSibling;
+          if (!errorElement || !errorElement.classList.contains('error-message')) {
+            errorElement = document.createElement('p');
+            errorElement.className = 'error-message text-red-500 text-xs mt-1';
+            input.parentNode.appendChild(errorElement);
+          }
+          errorElement.textContent = message;
+        },
+
+        clearFieldError(fieldName) {
+          const input = document.querySelector(`[name="${fieldName}"]`);
+          if (!input) return;
+
+          input.classList.remove('border-red-500');
+
+          const errorElement = input.nextElementSibling;
+          if (errorElement && errorElement.classList.contains('error-message')) {
+            errorElement.remove();
+          }
+        },
+
+        clearAllErrors() {
+          document.querySelectorAll('.error-message').forEach(el => el.remove());
+          document.querySelectorAll('.border-red-500').forEach(el => {
+            el.classList.remove('border-red-500');
+          });
+        }
+      };
+
+      // ============================================
+      // MODULE 5: UI RENDERER
+      // ============================================
+
+      const UIRenderer = {
+        renderMainView() {
+          const app = document.getElementById('app');
+
+          app.innerHTML = `
+            <div class="min-h-screen flex items-center justify-center p-4 py-8">
+              <div class="max-w-3xl w-full bg-white rounded-lg shadow-lg">
+                <!-- Header Section -->
+                <div class="p-6 pb-4 border-b border-gray-200">
+                  <h1 class="text-2xl font-bold text-enerkii-black mb-2">Netzbetreiber ermitteln</h1>
+                  <p class="text-sm text-enerkii-grey-dark">
+                    Geben Sie Ihre Adresse ein, um Informationen über Ihren Netzbetreiber und die Netzentgelte zu erhalten.
+                  </p>
+                </div>
+
+                <!-- Form Section -->
+                <div class="p-6">
+                  <form id="grid-operator-form">
+                    <!-- Persönliche Daten -->
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-enerkii-black mb-4">Persönliche Daten</h3>
+
+                      <!-- Name Row -->
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">Vorname *</label>
+                          <input type="text" name="vorname" placeholder="Max"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">Nachname *</label>
+                          <input type="text" name="name" placeholder="Mustermann"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                      </div>
+
+                      <!-- Anrede -->
+                      <div class="mb-4">
+                        <label class="block text-sm text-enerkii-grey-dark mb-1">Anrede</label>
+                        <select name="geschlecht"
+                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent bg-white text-sm">
+                          <option value="">Bitte wählen</option>
+                          <option value="Herr">Herr</option>
+                          <option value="Frau">Frau</option>
+                          <option value="Divers">Divers</option>
+                        </select>
+                      </div>
+
+                      <!-- Unternehmen -->
+                      <div class="mb-4">
+                        <label class="block text-sm text-enerkii-grey-dark mb-1">Unternehmen</label>
+                        <input type="text" name="unternehmen" placeholder="Muster GmbH"
+                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                      </div>
+                    </div>
+
+                    <!-- Kontaktdaten -->
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-enerkii-black mb-4">Kontaktdaten</h3>
+
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">E-Mail *</label>
+                          <input type="email" name="email" placeholder="max@muster.de"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">Telefon</label>
+                          <input type="tel" name="telefon" placeholder="+49 123 456789"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Technische Daten -->
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-enerkii-black mb-4">Technische Daten</h3>
+
+                      <div class="mb-4">
+                        <label class="block text-sm text-enerkii-grey-dark mb-1">Spannungsebene *</label>
+                        <select name="spannungsebene"
+                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent bg-white text-sm">
+                          <option value="">Bitte wählen</option>
+                          <option value="Niederspannung">Niederspannung</option>
+                          <option value="Mittelspannung">Mittelspannung</option>
+                          <option value="Hochspannung">Hochspannung</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Adressdaten -->
+                    <div class="mb-6">
+                      <h3 class="text-lg font-semibold text-enerkii-black mb-4">Adresse</h3>
+
+                      <!-- Straße -->
+                      <div class="mb-4">
+                        <label class="block text-sm text-enerkii-grey-dark mb-1">Straße und Hausnummer *</label>
+                        <input type="text" name="strasse" placeholder="Musterstraße 123"
+                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                      </div>
+
+                      <!-- PLZ und Stadt -->
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">PLZ *</label>
+                          <input type="text" name="plz" placeholder="12345" maxlength="5"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                        <div>
+                          <label class="block text-sm text-enerkii-grey-dark mb-1">Stadt *</label>
+                          <input type="text" name="stadt" placeholder="Musterstadt"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:border-transparent text-sm">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" id="submit-btn"
+                      class="w-full py-3 bg-enerkii-green text-white font-semibold rounded-md hover:bg-enerkii-green-mid transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-enerkii-green focus:ring-offset-2">
+                      Netzbetreiber ermitteln
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          `;
+
+          this.attachEventListeners();
+        },
+
+        renderSuccessView() {
+          const app = document.getElementById('app');
+          app.innerHTML = `
+            <div class="flex items-center justify-center min-h-screen p-4">
+              <div class="max-w-2xl w-full">
+                <div class="bg-white rounded-lg shadow-lg p-12 text-center">
+                  <div class="w-16 h-16 bg-enerkii-green-light rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8 text-enerkii-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                  </div>
+                  <h3 class="text-2xl font-semibold text-enerkii-black mb-2">
+                    Anfrage erfolgreich!
+                  </h3>
+                  <p class="text-enerkii-grey-dark">
+                    Wir senden Ihnen in Kürze Informationen zu Ihrem Netzbetreiber und den Netzentgelten per E-Mail.
+                  </p>
+                </div>
+              </div>
+            </div>
+          `;
+        },
+
+        attachEventListeners() {
+          // Form input listeners
+          const formInputs = document.querySelectorAll('[name="vorname"], [name="name"], [name="geschlecht"], [name="unternehmen"], [name="email"], [name="telefon"], [name="spannungsebene"], [name="strasse"], [name="plz"], [name="stadt"]');
+          formInputs.forEach(input => {
+            input.addEventListener('input', (e) => {
+              StateManager.updateFormField(e.target.name, e.target.value);
+              FormValidator.clearFieldError(e.target.name);
+            });
+          });
+
+          // Form submit listener
+          const form = document.getElementById('grid-operator-form');
+          if (form) {
+            form.addEventListener('submit', this.handleSubmit.bind(this));
+          }
+        },
+
+        async handleSubmit(e) {
+          e.preventDefault();
+          FormValidator.clearAllErrors();
+
+          const errors = FormValidator.validate(AppState.formData);
+
+          if (Object.keys(errors).length > 0) {
+            Object.entries(errors).forEach(([field, message]) => {
+              FormValidator.showFieldError(field, message);
+            });
+            return;
+          }
+
+          const submitBtn = document.getElementById('submit-btn');
+          if (!submitBtn) return;
+
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Wird gesendet...';
+          submitBtn.classList.add('opacity-75', 'cursor-not-allowed');
+
+          try {
+            await DataService.submitGridOperatorLookup(AppState.formData);
+            StateManager.updateState({ submitted: true });
+            this.renderSuccessView();
+          } catch (error) {
+            alert('Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut.');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Netzbetreiber ermitteln';
+            submitBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+          }
+        }
+      };
+
+      // ============================================
+      // MODULE 6: APPLICATION INITIALIZATION
+      // ============================================
+
+      function initializeApp() {
+        UIRenderer.renderMainView();
+      }
+
+      // Start app when DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeApp);
+      } else {
+        initializeApp();
+      }
+    })();
+  </script>
+</body>
+</html>
